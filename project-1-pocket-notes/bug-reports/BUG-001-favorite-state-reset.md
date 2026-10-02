@@ -35,4 +35,4 @@
 
 - Видео воспроизведения бага: 
 
-https://github.com/user-attachments/assets/491a77b6-34f4-47ff-8b84-d5481ad869fd
+https://github.com/vitatuday997-web/QA-portfolio/issues/2#issue-5678455502
