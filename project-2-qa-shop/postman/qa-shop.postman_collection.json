@@ -26,11 +26,10 @@
           }
         },
         "url": {
-          "raw": "localhost:4000/api/v1/sandbox",
+          "raw": "{{baseUrl}}/api/v1/sandbox",
           "host": [
-            "localhost"
+            "{{baseUrl}}"
           ],
-          "port": "4000",
           "path": [
             "api",
             "v1",
@@ -44,14 +43,7 @@
       "name": "Login",
       "request": {
         "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{token}}",
-              "type": "string"
-            }
-          ]
+          "type": "noauth"
         },
         "method": "POST",
         "header": [
@@ -369,7 +361,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\r\n    \"cartId\": 2\r\n}",
+          "raw": "",
           "options": {
             "raw": {
               "language": "json"
