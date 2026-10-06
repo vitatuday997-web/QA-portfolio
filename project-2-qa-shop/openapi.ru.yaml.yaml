@@ -1,0 +1,1779 @@
+openapi: 3.0.3
+
+# ============================================================================
+# QA Shop Practice API — OpenAPI 3.0.3
+#
+# Этот файл — контракт УЧЕБНОЙ СРЕДЫ. Он НИКАК НЕ СВЯЗАН с собственным backend LearnQA.dev
+# (Supabase auth, прогресс, достижения): здесь отдельная база данных,
+# отдельный процесс и отдельная авторизация. Ни один endpoint здесь не может затронуть
+# данные реальных пользователей.
+#
+# ИСПОЛЬЗОВАНИЕ
+#   Swagger UI : https://editor.swagger.io  → File > Import File
+#   Postman    : Import > File > openapi.yaml  (коллекция создастся автоматически)
+#   REST Assured / Playwright: справочник для проверки схемы
+#
+# АВТОРИЗАЦИЯ ДВУХУРОВНЕВАЯ — это чаще всего путают:
+#   1. X-Sandbox-Key  → КАКАЯ ОБЛАСТЬ ДАННЫХ (tenant). Нужен почти во всех endpoint.
+#   2. Authorization  → КАКОЙ ПОЛЬЗОВАТЕЛЬ (сессия). Нужен только в endpoint с 🔒.
+#   Без ключа sandbox token бесполезен; без token ключ sandbox
+#   позволяет только чтение.
+# ============================================================================
+
+info:
+  title: QA Shop Practice API
+  version: "1.0.0"
+  description: |
+    Настоящий API интернет-магазина для практики тестовой автоматизации. Это не mock:
+    данные сохраняются, операции выполняются в транзакциях, остатки действительно уменьшаются.
+
+    **Если не передать ключ sandbox**, подключение будет к demo-данным только для чтения —
+    `GET`-эндпоинты будут работать, а попытки записи вернут `401`. Так сделано,
+    чтобы первый запуск был проще.
+
+    **Чтобы открыть свою область:** выполни `POST /sandbox` → передай полученный `apiKey`
+    в заголовке `X-Sandbox-Key`. Область автоматически удаляется через 7 дней.
+
+    **Перед каждым тестовым прогоном** вызывай `POST /sandbox/reset` — чистое состояние
+    является базовой дисциплиной автоматизации, и здесь для этого есть отдельный endpoint.
+
+    Demo-аккаунт: `demo@qashop.test` / `Password123!`
+  contact:
+    name: LearnQA.dev
+    url: https://learnqa.dev
+
+servers:
+- url: http://localhost:4000
+  description: Локальный Docker (docker compose up)
+
+tags:
+- name: Система
+  description: Состояние сервиса и обнаружение API
+- name: Песочница
+  description: Управление изолированной областью данных — создать, посмотреть 
+    состояние, сбросить, прочитать логи
+- name: Авторизация
+  description: Регистрация, вход, сессия
+- name: Каталог
+  description: Товар, вариант, категория, бренд, поиск
+- name: Корзина
+  description: Корзина и её позиции — здесь происходит резервирование товара
+- name: Заказы
+  description: Checkout, список заказов, отмена, счёт, жизненный цикл (оплата → 
+    отправка → доставка → возврат)
+- name: Адреса
+  description: Адресная книга — правило адреса по умолчанию может затрагивать 
+    больше одной строки
+- name: Отзывы
+  description: Отзывы о товарах и модерация — неодобренные отзывы не видны в 
+    списке и не входят в среднюю оценку
+- name: Дефекты
+  description: Управляемые bug-флаги — чтобы проверить, что тест действительно 
+    становится красным
+
+security:
+- SandboxKey: []
+
+paths:
+
+  # ─────────────────────────────────── Система ────────────────────────────────
+  /health:
+    get:
+      tags: [Система]
+      summary: Состояние сервиса и базы данных
+      description: |
+        Работает ДО определения sandbox: отвечает даже если база данных недоступна.
+        Если возвращается `503`, значит API запущен, но не может подключиться к БД —
+        этот endpoint помогает отличить «упал сервис» от «упала БД».
+      security: []
+      responses:
+        "200":
+          description: Всё работает
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+        "503":
+          description: Не удалось подключиться к базе данных
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+
+  /api/v1/openapi.yaml:
+    get:
+      tags: [Система]
+      summary: Этот OpenAPI-контракт
+      description: |
+        Контракт отдаётся из файла и НЕ генерируется из кода. Postman
+        через «Import > Link» и Swagger через «Import URL» могут читать этот адрес напрямую.
+
+        Адрес `/openapi.yaml` отдаёт тот же документ без префикса версии.
+      security: []
+      responses:
+        "200":
+          description: OpenAPI-документ (YAML)
+          content:
+            text/yaml:
+              schema: {type: string}
+
+  /api/v1:
+    get:
+      tags: [Система]
+      summary: Точка обнаружения API
+      security: []
+      responses:
+        "200":
+          description: Шаги быстрого старта
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: {type: string, example: QA Shop API}
+                  version: {type: string, example: v1}
+                  quickStart:
+                    type: array
+                    items: {type: string}
+
+  # ─────────────────────────────────── Песочница ─────────────────────────────
+  /api/v1/sandbox:
+    post:
+      tags: [Песочница]
+      summary: Создать новую изолированную область данных
+      description: |
+        Регистрация НЕ НУЖНА. Ты получаешь точную копию шаблона: 120 товаров, 360
+        вариантов, 41 пользователь и история из 150 заказов. Поэтому SQL-практика
+        сразу работает на осмысленном объёме данных.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  maxLength: 80
+                  example: моя-тестовая-область
+      responses:
+        "201":
+          description: Область создана
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SandboxCreated"}
+
+  /api/v1/sandbox/state:
+    get:
+      tags: [Песочница]
+      summary: Количество строк
+      description: |
+        Для сравнения состояния до и после теста. Самый быстрый ответ на вопрос:
+        «Мой тест действительно что-то изменил?».
+      responses:
+        "200":
+          description: Сводка состояния
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SandboxState"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "410": {$ref: "#/components/responses/SandboxExpired"}
+
+  /api/v1/sandbox/reset:
+    post:
+      tags: [Песочница]
+      summary: Вернуться к seed-данным
+      description: |
+        Все пользовательские данные удаляются, затем шаблон копируется заново.
+        Открытые сессии тоже удаляются — после сброса нужно снова выполнить `login`.
+
+        Предполагается использовать этот endpoint в шаге `beforeAll` тестового набора.
+      responses:
+        "200":
+          description: Сброшено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sandboxId: {type: string, format: uuid}
+                  resetAt: {type: string, format: date-time}
+                  durationMs: {type: integer, example: 340}
+                  message: {type: string}
+        "401":
+          description: В demo-режиме только для чтения сброс недоступен
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v1/sandbox/logs:
+    get:
+      tags: [Песочница]
+      summary: Журнал аудита (практика анализа логов)
+      description: |
+        Если получена ошибка, передай сюда `correlationId` из ответа —
+        увидишь всю цепочку запроса. Это API-часть анализа первопричины.
+      parameters:
+      - name: level
+        in: query
+        schema: {type: string, enum: [INFO, WARN, ERROR]}
+      - name: action
+        in: query
+        schema: {type: string, example: order.create}
+      - name: correlationId
+        in: query
+        schema: {type: string, example: req-8f3c1e2a}
+      - name: limit
+        in: query
+        schema: {type: integer, default: 100, maximum: 500}
+      responses:
+        "200":
+          description: Строки лога (сначала новые)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer}
+                  limit: {type: integer}
+                  logs:
+                    type: array
+                    items: {$ref: "#/components/schemas/AuditLog"}
+        "400":
+          description: Недопустимое значение `level`
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  # ─────────────────────────────────── Авторизация ───────────────────────────
+  /api/v1/auth/register:
+    post:
+      tags: [Авторизация]
+      summary: Регистрация нового пользователя
+      description: |
+        Token НЕ возвращается. Регистрация и вход — разные операции; если объединить их,
+        возникает предположение «каждый зарегистрированный пользователь автоматически входит»,
+        которое сломается при добавлении подтверждения e-mail.
+
+        E-mail нормализуется в нижний регистр: `Ali@x.com` и `ali@x.com` считаются одним пользователем.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name]
+              properties:
+                email: {type: string, format: email, example: yeni@qashop.test}
+                password:
+                  type: string
+                  minLength: 8
+                  description: Не менее 8 символов, минимум одна буква и одна 
+                    цифра
+                  example: Password123!
+                name: {type: string, minLength: 2, example: Новый Пользователь}
+      responses:
+        "201":
+          description: Пользователь создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: {$ref: "#/components/schemas/User"}
+        "409":
+          description: E-mail уже зарегистрирован (`EMAIL_ALREADY_EXISTS`)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: |
+            Ошибка валидации. Поле с кодом показывает, какое правило сработало:
+            `INVALID_EMAIL`, `WEAK_PASSWORD`, `INVALID_NAME`.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v1/auth/login:
+    post:
+      tags: [Авторизация]
+      summary: Войти и получить token
+      description: |
+        ⚠ И для несуществующего пользователя, и для неверного пароля возвращаются
+        **одинаковый** `401` и **одинаковое** сообщение. Разные сообщения раскрывали бы,
+        зарегистрирован ли конкретный e-mail (user enumeration). Тест должен ожидать именно это.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: {type: string, example: demo@qashop.test}
+                password: {type: string, example: Password123!}
+      responses:
+        "200":
+          description: Вход выполнен успешно
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LoginResponse"}
+        "400":
+          description: "Не хватает `email` или `password`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Неверные данные или аккаунт неактивен
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v1/auth/me:
+    get:
+      tags: [Авторизация]
+      summary: 🔒 Текущий авторизованный пользователь
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      responses:
+        "200":
+          description: Данные пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    allOf:
+                    - $ref: "#/components/schemas/User"
+                    - type: object
+                      properties:
+                        order_count: {type: integer, example: 4}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Авторизация]
+      summary: 🔒 Завершить сессию
+      description: |
+        Действительно завершает сессию (это отмечается в базе данных). При полностью
+        stateless JWT logout мог бы быть фиктивным `204`: старый token продолжал бы работать,
+        и тест «после logout вызвать `/me` со старым token» ошибочно оставался бы зелёным.
+        Здесь такой тест корректно получает `401`.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      responses:
+        "204": {description: Выход выполнен}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Авторизация]
+      summary: 🔒 Обновить token
+      description: Старая сессия отменяется, выдаётся новый token.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      responses:
+        "200":
+          description: Новый token
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TokenResponse"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  # ─────────────────────────────────── Каталог ────────────────────────────────
+  /api/v1/products:
+    get:
+      tags: [Каталог]
+      summary: Список товаров
+      description: |
+        Неактивные товары по умолчанию СКРЫТЫ (soft delete). С `includeInactive=true`
+        они видны — так можно тестировать правило «удалённый товар не показывается в каталоге,
+        но остаётся в старом заказе».
+
+        Есть товары без бренда (`brand = null`). Это сделано намеренно:
+        без таких строк нельзя наглядно увидеть разницу между INNER JOIN и LEFT JOIN.
+      parameters:
+      - {name: page, in: query, schema: {type: integer, default: 1, minimum: 1}}
+      - {name: size, in: query, schema: {type: integer, default: 20, maximum: 
+            100}}
+      - name: sort
+        in: query
+        schema: {type: string, enum: [price, name, created, sku], default: sku}
+      - {name: order, in: query, schema: {type: string, enum: [asc, desc], 
+            default: asc}}
+      - {name: category, in: query, schema: {type: string, example: tshirts}}
+      - {name: brand, in: query, schema: {type: string, example: Nike}}
+      - {name: minPrice, in: query, schema: {type: number, example: 200}}
+      - {name: maxPrice, in: query, schema: {type: number, example: 800}}
+      - {name: q, in: query, schema: {type: string, example: Blue}}
+      - {name: includeInactive, in: query, schema: {type: boolean, default: 
+            false}}
+      responses:
+        "200":
+          description: Список товаров с пагинацией
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: "#/components/schemas/Page"
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items: {$ref: "#/components/schemas/Product"}
+        "400":
+          description: Неизвестное значение `sort`
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v1/products/{id}:
+    get:
+      tags: [Каталог]
+      summary: Детали товара
+      description: |
+        `rating_avg` рассчитывается ТОЛЬКО по одобренным отзывам; ожидающие модерации отзывы
+        не должны влиять на оценку. Неактивный товар возвращает `404`.
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}, example: 1}
+      responses:
+        "200":
+          description: Товар
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  product: {$ref: "#/components/schemas/ProductDetail"}
+        "400": {description: '`id` не является числом'}
+        "404": {description: Товар не найден или больше не продаётся}
+
+  /api/v1/products/{id}/variants:
+    get:
+      tags: [Каталог]
+      summary: Варианты товара и остатки
+      description: |
+        `available = stock_qty - reserved_qty`. Если смотреть только на `stock_qty`,
+        не будут учтены товары, уже зарезервированные в корзинах, что приведёт к oversell.
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}, example: 1}
+      responses:
+        "200":
+          description: Список вариантов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  productId: {type: integer}
+                  total: {type: integer}
+                  variants:
+                    type: array
+                    items: {$ref: "#/components/schemas/Variant"}
+        "404": {description: Товар не найден}
+
+  /api/v1/categories:
+    get:
+      tags: [Каталог]
+      summary: Дерево категорий
+      responses:
+        "200":
+          description: Родительские категории и их подкатегории
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer}
+                  categories:
+                    type: array
+                    items: {$ref: "#/components/schemas/Category"}
+
+  /api/v1/categories/{id}/products:
+    get:
+      tags: [Каталог]
+      summary: Товары категории (включая подкатегории)
+      description: |
+        При запросе родительской категории возвращаются товары из всех её подкатегорий.
+        Запрос, проверяющий только прямое совпадение, для родительских категорий
+        часто возвращал бы пустой список.
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: page, in: query, schema: {type: integer, default: 1}}
+      - {name: size, in: query, schema: {type: integer, default: 20}}
+      responses:
+        "200":
+          description: Список товаров с пагинацией
+        "404": {description: Категория не найдена}
+
+  /api/v1/brands:
+    get:
+      tags: [Каталог]
+      summary: Список брендов
+      responses:
+        "200":
+          description: Бренды и количество товаров
+
+  /api/v1/search:
+    get:
+      tags: [Каталог]
+      summary: Поиск товаров
+      description: |
+        Поисковый запрос короче 2 символов возвращает `400`. Если пустой поиск молча
+        превратить в «верни всё», это может вызвать незаметную в UI проблему производительности.
+      parameters:
+      - {name: q, in: query, required: true, schema: {type: string, minLength: 2},
+        example: Dress}
+      - {name: page, in: query, schema: {type: integer, default: 1}}
+      - {name: size, in: query, schema: {type: integer, default: 20}}
+      responses:
+        "200": {description: Результаты поиска}
+        "400": {description: Слишком короткий поисковый запрос}
+
+  # ─────────────────────────────────── Корзина ────────────────────────────────
+  /api/v1/carts:
+    post:
+      tags: [Корзина]
+      summary: Создать корзину
+      description: Если передать token, корзина привязывается к пользователю; 
+        без token создаётся гостевая корзина.
+      responses:
+        "201":
+          description: Корзина создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cart: {$ref: "#/components/schemas/Cart"}
+        "401": {$ref: "#/components/responses/ReadOnlySandbox"}
+
+  /api/v1/carts/{id}:
+    get:
+      tags: [Корзина]
+      summary: Детали корзины и суммы
+      description: |
+        `warnings.priceChanged` перечисляет позиции, где цена в корзине отличается
+        от текущей цены товара. Корзина сохраняет старую цену — это не bug, а осознанное
+        решение; но поскольку UI сам решает, какую цену показывать, это поведение НУЖНО ТЕСТИРОВАТЬ.
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: Корзина
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CartDetail"}
+        "403": {description: Корзина принадлежит другому пользователю}
+        "404": {description: Корзина не найдена}
+
+  /api/v1/carts/{id}/items:
+    post:
+      tags: [Корзина]
+      summary: Добавить товар в корзину
+      description: |
+        Товар РЕЗЕРВИРУЕТСЯ (`reserved_qty` увеличивается). Без резервирования два пользователя
+        могли бы положить в корзину последний экземпляр, а ошибка обнаружилась бы только при оплате.
+
+        Если тот же вариант добавить повторно, увеличивается количество, новая строка не создаётся.
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [variantId]
+              properties:
+                variantId: {type: integer, example: 1}
+                qty: {type: integer, minimum: 1, default: 1, example: 2}
+      responses:
+        "201":
+          description: Добавлено, возвращается актуальная корзина
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CartDetail"}
+        "409":
+          description: |-
+            `OUT_OF_STOCK` — `details.available` показывает, сколько единиц осталось.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: "`INVALID_VARIANT`, `INVALID_QTY` или `PRODUCT_INACTIVE`"
+        "404": {description: Вариант не найден}
+
+  /api/v1/carts/{id}/items/{itemId}:
+    patch:
+      tags: [Корзина]
+      summary: Изменить количество позиции
+      description: |
+        Удалять через `qty: 0` НЕЛЬЗЯ → `422`. Для удаления есть `DELETE`.
+        Если одно и то же действие поддерживать двумя способами, их поведение со временем может разойтись.
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: itemId, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [qty]
+              properties:
+                qty: {type: integer, minimum: 1, example: 3}
+      responses:
+        "200": { description: "Обновлено, возвращается актуальная корзина" }
+        "409": {description: "`OUT_OF_STOCK`"}
+        "422": {description: "`INVALID_QTY`"}
+        "404": {description: Позиция корзины не найдена}
+    delete:
+      tags: [Корзина]
+      summary: Удалить позицию из корзины
+      description: Резервирование снимается. Если этого не сделать, 
+        зарезервированный остаток будет «утекать».
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: itemId, in: path, required: true, schema: {type: integer}}
+      responses:
+        "204": {description: Удалено}
+        "404": {description: Позиция корзины не найдена}
+
+  /api/v1/carts/{id}/coupon:
+    post:
+      tags: [Корзина]
+      summary: Применить купон
+      description: |
+        Причина отказа возвращается отдельным кодом — одно сообщение «купон недействителен»
+        не позволило бы понять, какое именно правило сработало:
+
+        | Код | Значение | Пример в seed-данных |
+        |---|---|---|
+        | `COUPON_NOT_FOUND` | Такого купона нет | — |
+        | `COUPON_NOT_STARTED` | Ещё не начал действовать | `FUTURE15` |
+        | `COUPON_EXPIRED` | Срок действия истёк | `EXPIRED20` |
+        | `COUPON_USAGE_LIMIT_REACHED` | Лимит использований исчерпан | `MAXEDOUT` |
+        | `COUPON_MIN_TOTAL_NOT_MET` | Недостаточная сумма заказа | `VIP1000` |
+
+        Рабочие примеры: `WELCOME10` (10%), `SAVE50` (50 TL, минимум 300).
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string, example: WELCOME10}
+      responses:
+        "200": { description: "Купон применён, возвращается актуальная корзина" }
+        "422":
+          description: Купон отклонён (код причины — из таблицы выше)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  # ─────────────────────────────────── Заказы ─────────────────────────────────
+  /api/v1/orders:
+    post:
+      tags: [Заказы]
+      summary: 🔒 Checkout — преобразовать корзину в заказ
+      description: |
+        В одной транзакции: уменьшается остаток, снимается резерв, увеличивается счётчик
+        использований купона, корзина получает статус `converted`.
+
+        **Купон повторно проверяется В МОМЕНТ CHECKOUT.** Недостаточно того, что он был действителен
+        при добавлении в корзину — корзина могла оставаться открытой неделю, а купон за это время
+        истечь. Без повторной проверки можно было бы получить скидку по просроченному купону.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cartId]
+              properties:
+                cartId: {type: integer, example: 42}
+      responses:
+        "201":
+          description: Заказ создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: {$ref: "#/components/schemas/Order"}
+        "409":
+          description: "`CART_NOT_OPEN` или `OUT_OF_STOCK`"
+        "422":
+          description: "`EMPTY_CART`, `PRODUCT_INACTIVE`, `INVALID_CART_ID` или ошибка
+            купона"
+        "403": {description: Корзина принадлежит другому пользователю}
+        "404": {description: Корзина не найдена}
+    get:
+      tags: [Заказы]
+      summary: 🔒 Мои заказы
+      description: |
+        Фильтр берётся из текущей сессии пользователя, а НЕ от клиента. Endpoint,
+        принимающий `?userId=`, мог бы позволить читать заказы другого пользователя.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: page, in: query, schema: {type: integer, default: 1}}
+      - {name: size, in: query, schema: {type: integer, default: 20}}
+      - name: status
+        in: query
+        schema: {type: string, enum: [placed, paid, shipped, delivered, 
+              cancelled, returned]}
+      responses:
+        "200": {description: Список заказов с пагинацией}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  /api/v1/orders/{id}:
+    get:
+      tags: [Заказы]
+      summary: 🔒 Детали заказа
+      description: |
+        Заказ другого пользователя возвращает `403`, а не `404`. Оба варианта допустимы;
+        здесь поведение выбрано явно, чтобы тест прав доступа имел однозначный ожидаемый результат.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: Заказ, позиции, платежи и отправления
+        "403": {description: Заказ принадлежит другому пользователю}
+        "404": {description: Заказ не найден}
+
+  /api/v1/orders/{id}/cancel:
+    post:
+      tags: [Заказы]
+      summary: 🔒 Отменить заказ
+      description: |
+        Отменить можно только заказ в статусах `placed` и `paid`. Отправленный заказ
+        НЕ ОТМЕНЯЕТСЯ, а возвращается — это разные операции с точки зрения склада и учёта.
+
+        При отмене остаток возвращается, а счётчик использования купона уменьшается.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200": {description: Заказ отменён}
+        "409":
+          description: "`INVALID_TRANSITION` — `details.allowed` показывает разрешённые
+            состояния"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403": {description: Заказ принадлежит другому пользователю}
+
+  /api/v1/orders/{id}/invoice:
+    get:
+      tags: [Заказы]
+      summary: 🔒 Счёт
+      description: |
+        Счёт формируется из СОХРАНЁННЫХ значений заказа, а не из текущих цен товаров.
+        Поле `reconciled` подтверждает, что сумма строк совпадает с промежуточным итогом —
+        тест, читающий счёт, может поймать ошибку согласованности, незаметную в UI.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: Документ счёта
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Invoice"}
+        "403": {description: Заказ принадлежит другому пользователю}
+
+  # ───────────────────────── Жизненный цикл заказа ────────────────────────────
+  /api/v1/orders/{id}/pay:
+    post:
+      tags: [Заказы]
+      summary: 🔒 Провести оплату
+      description: |
+        Переводит заказ из `placed` в `paid` и создаёт запись об оплате.
+
+        Если отправить `simulateFailure: true`, создаётся НЕУСПЕШНАЯ попытка оплаты:
+        запись сохраняется, но статус заказа НЕ МЕНЯЕТСЯ, а ответ — **402**.
+        «Попытка была и не удалась» и «попытки не было вообще» — разные состояния;
+        ответ 200 скрыл бы эту разницу.
+
+        Нельзя провести вторую успешную оплату того же заказа (`ALREADY_PAID`) —
+        двойной клик не должен создавать два списания.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method: {type: string, enum: [card, transfer, cod], default: 
+                    card}
+                simulateFailure: {type: boolean, default: false}
+      responses:
+        "200":
+          description: Оплата принята, заказ получил статус `paid`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: {$ref: "#/components/schemas/Order"}
+                  payment: {$ref: "#/components/schemas/Payment"}
+        "402":
+          description: Оплата неуспешна — запись создана, статус заказа не 
+            изменён
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: {$ref: "#/components/schemas/Order"}
+                  payment: {$ref: "#/components/schemas/Payment"}
+        "409":
+          description: "`ALREADY_PAID` или `INVALID_TRANSITION`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: "`INVALID_PAYMENT_METHOD`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403": {description: Заказ принадлежит другому пользователю}
+
+  /api/v1/orders/{id}/ship:
+    post:
+      tags: [Заказы]
+      summary: 🔒 Передать в доставку
+      description: |
+        Переход `paid` → `shipped`. Неоплаченный заказ нельзя отправить:
+        таблица переходов состояний запрещает `placed` → `shipped` и возвращает **409**.
+        Это прикладной аналог проверки данных «заказ отправлен, но оплаты нет».
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                carrier: {type: string, example: Yurtici}
+                trackingNo: {type: string, example: TRK0000123456}
+      responses:
+        "200":
+          description: Запись об отправке создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: {$ref: "#/components/schemas/Order"}
+                  shipment: {$ref: "#/components/schemas/Shipment"}
+        "409":
+          description: "`INVALID_TRANSITION` — неоплаченный заказ нельзя отправить"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403": {description: Заказ принадлежит другому пользователю}
+
+  /api/v1/orders/{id}/deliver:
+    post:
+      tags: [Заказы]
+      summary: 🔒 Отметить как доставленный
+      description: |
+        Переход `shipped` → `delivered`. Фиксируется МОМЕНТ доставки
+        (`shipment.delivered_at`); окно возврата отсчитывается именно от него.
+        Если считать от даты отправки, при долгой доставке право клиента на возврат
+        незаметно сократилось бы.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: Заказ доставлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: {$ref: "#/components/schemas/Order"}
+                  shipment: {$ref: "#/components/schemas/Shipment"}
+        "409":
+          description: "`INVALID_TRANSITION`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403": {description: Заказ принадлежит другому пользователю}
+
+  /api/v1/orders/{id}/return:
+    post:
+      tags: [Заказы]
+      summary: 🔒 Оформить возврат
+      description: |
+        Переход `delivered` → `returned`. Возврат отличается от ОТМЕНЫ:
+        товар уже у клиента, затем возвращается на склад; действует окно **14 дней**.
+        Если срок вышел, возвращается `409 RETURN_WINDOW_CLOSED`.
+
+        Побочные эффекты: остаток восстанавливается, успешный платёж становится `refunded`,
+        запись доставки получает статус `returned`.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: Возврат завершён
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order: {$ref: "#/components/schemas/Order"}
+                  restoredItems: {type: integer, description: 'Количество позиций,
+                      возвращённых на склад'}
+        "409":
+          description: "`RETURN_WINDOW_CLOSED` или `INVALID_TRANSITION`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403": {description: Заказ принадлежит другому пользователю}
+
+  # ─────────────────────────────────── Адреса ─────────────────────────────────
+  /api/v1/addresses:
+    get:
+      tags: [Адреса]
+      summary: 🔒 Мои адреса
+      description: Адрес по умолчанию возвращается первым в списке.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      responses:
+        "200":
+          description: Список адресов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer}
+                  addresses:
+                    type: array
+                    items: {$ref: "#/components/schemas/Address"}
+    post:
+      tags: [Адреса]
+      summary: 🔒 Добавить адрес
+      description: |
+        ПЕРВЫЙ адрес автоматически становится адресом по умолчанию, чтобы при первом checkout
+        не возникала ситуация «адрес по умолчанию отсутствует».
+
+        Если отправить `isDefault: true`, статус «по умолчанию» снимается с остальных адресов.
+        То есть запрос меняет и строки, которые напрямую не указаны в body; тест, смотрящий только
+        на ответ API, может этого не заметить, а проверка БД — заметит.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [line1, city]
+              properties:
+                label: {type: string, example: дом}
+                line1: {type: string, minLength: 3}
+                city: {type: string, minLength: 2}
+                country: {type: string, pattern: "^[A-Za-z]{2}$", default: TR}
+                postalCode: {type: string, nullable: true}
+                isDefault: {type: boolean}
+      responses:
+        "201":
+          description: Адрес создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address: {$ref: "#/components/schemas/Address"}
+        "422":
+          description: "`MISSING_FIELD`, `INVALID_FIELD` или `INVALID_COUNTRY`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v1/addresses/{id}:
+    patch:
+      tags: [Адреса]
+      summary: 🔒 Обновить адрес
+      description: Частичное обновление — изменяются только переданные поля.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: {type: string}
+                line1: {type: string}
+                city: {type: string}
+                country: {type: string}
+                postalCode: {type: string, nullable: true}
+                isDefault: {type: boolean}
+      responses:
+        "200":
+          description: Обновлённый адрес
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address: {$ref: "#/components/schemas/Address"}
+        "422":
+          description: "`EMPTY_PATCH` — не переданы поля для обновления"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403": {description: Адрес принадлежит другому пользователю}
+        "404": {description: Адрес не найден}
+    delete:
+      tags: [Адреса]
+      summary: 🔒 Удалить адрес
+      description: |
+        Если удалить адрес по умолчанию, один из оставшихся становится адресом по умолчанию.
+        Иначе у пользователя не останется такого адреса, и проблема проявится только на checkout.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "204": {description: Удалено}
+        "403": {description: Адрес принадлежит другому пользователю}
+        "404": {description: Адрес не найден}
+
+  # ─────────────────────────────────── Отзывы ─────────────────────────────────
+  /api/v1/products/{id}/reviews:
+    get:
+      tags: [Отзывы]
+      summary: Отзывы о товаре
+      description: |
+        По умолчанию возвращаются ТОЛЬКО одобренные отзывы.
+        Через `?status=pending` можно посмотреть очередь модерации.
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - name: status
+        in: query
+        schema: {type: string, enum: [pending, approved, rejected], default: 
+            approved}
+      - {name: page, in: query, schema: {type: integer, default: 1}}
+      - {name: size, in: query, schema: {type: integer, default: 20, maximum: 
+            100}}
+      responses:
+        "200":
+          description: Список отзывов
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: "#/components/schemas/Page"
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items: {$ref: "#/components/schemas/Review"}
+        "404": {description: Товар не найден}
+    post:
+      tags: [Отзывы]
+      summary: 🔒 Написать отзыв
+      description: |
+        Новый отзыв создаётся со статусом `pending`. Ответ **201 НЕ означает, что отзыв опубликован** —
+        до одобрения он не виден в списке и не участвует в средней оценке. Это явно указано,
+        потому что поведение «я отправил отзыв, но его не видно» часто понимают неправильно.
+
+        Один пользователь не может оставить два отзыва на один и тот же товар.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating: {type: integer, minimum: 1, maximum: 5}
+                comment: {type: string, maxLength: 2000}
+      responses:
+        "201":
+          description: Отзыв принят, ожидает модерации
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  review: {$ref: "#/components/schemas/Review"}
+                  note: {type: string}
+        "422":
+          description: "`INVALID_RATING` или `REVIEW_ALREADY_EXISTS`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v1/products/{id}/rating:
+    get:
+      tags: [Отзывы]
+      summary: Средняя оценка и распределение
+      description: |
+        Средняя оценка вынесена в ОТДЕЛЬНЫЙ endpoint: список отзывов пагинируется, средняя — нет.
+        Если считать среднюю только по первой странице списка, для товара с большим числом отзывов
+        получится незаметно неверный результат.
+
+        Расчёт выполняется ТОЛЬКО по одобренным отзывам (`basis: approved`).
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: Сводка оценки
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RatingSummary"}
+        "404": {description: Товар не найден}
+
+  /api/v1/reviews/{id}:
+    patch:
+      tags: [Отзывы]
+      summary: 🔒 Одобрить / отклонить отзыв
+      description: |
+        Endpoint модерации. В этой учебной среде нет разделения ролей —
+        любой авторизованный пользователь может модерировать отзывы.
+        Цель — сделать процесс одобрения тестируемым.
+      security:
+      - SandboxKey: []
+        BearerAuth: []
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: {type: string, enum: [pending, approved, rejected]}
+      responses:
+        "200":
+          description: Обновлённый отзыв
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  review: {$ref: "#/components/schemas/Review"}
+        "422":
+          description: "`INVALID_STATUS`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "404": {description: Отзыв не найден}
+
+  # ───────────────────────── Управляемые дефекты ──────────────────────────────
+  /api/v1/sandbox/bugs:
+    get:
+      tags: [Дефекты]
+      summary: Каталог доступных дефектов
+      description: |
+        Каждый флаг включает реальный дефект в реальной части системы.
+        Поле `catchableBy` показывает, какая проверка ДОЛЖНА этот дефект поймать.
+
+        Смысл практики: включи флаг, запусти тест и проверь, стал ли он красным.
+        Если нет — тест фактически ничего важного не проверяет.
+      responses:
+        "200":
+          description: Каталог дефектов и включённые дефекты
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sandboxId: {type: string, format: uuid}
+                  active:
+                    type: array
+                    items: {type: string}
+                  available:
+                    type: array
+                    items: {$ref: "#/components/schemas/BugFlag"}
+    patch:
+      tags: [Дефекты]
+      summary: Включить / выключить дефект
+      description: |
+        Частичное обновление: флаги, которые не переданы, сохраняют своё состояние.
+
+        Неизвестный флаг НЕ игнорируется молча: возвращается `422 UNKNOWN_BUG_FLAG`.
+        Иначе опечатавшийся пользователь мог бы думать, что включил дефект, тест остался бы зелёным,
+        и он сделал бы ложный вывод «мой тест работает» — именно этого здесь стараются избежать.
+
+        `POST /sandbox/reset` выключает все флаги.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {type: boolean}
+              example: {oversell: true, discount_twice: false}
+      responses:
+        "200":
+          description: Текущее состояние флагов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sandboxId: {type: string, format: uuid}
+                  active:
+                    type: array
+                    items: {type: string}
+                  flags: {type: object, additionalProperties: {type: boolean}}
+        "401": {$ref: "#/components/responses/ReadOnlySandbox"}
+        "422":
+          description: "`UNKNOWN_BUG_FLAG`, `INVALID_FLAG_VALUE` или `EMPTY_BODY`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v1/sandbox/bugs/hidden:
+    post:
+      tags: [Дефекты]
+      summary: Начать скрытый раунд
+      description: |
+        Система случайно включает несколько дефектов и НЕ сообщает, какие именно.
+
+        Когда ты сам включаешь известный дефект, проверяется вопрос: «мой тест становится красным?».
+        Скрытый раунд проверяет другое: «смогу ли я НАЙТИ дефект?». В реальной работе важнее второй
+        вопрос, потому что никто заранее не говорит, какой именно bug присутствует.
+
+        Пока идёт раунд, в ответе `GET /sandbox/bugs` вообще НЕТ полей `enabled` и `active` —
+        ответ остаётся известен серверу и не раскрывается интерфейсу. По той же причине
+        `PATCH /sandbox/bugs` в этот момент отклоняется с `HIDDEN_ROUND_ACTIVE`: перебор флагов
+        не должен позволять угадать ответ методом проб и ошибок.
+
+        В журнал аудита выбранные флаги тоже НЕ записываются — сохраняется только их количество.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                count:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  default: 3
+            example: {count: 3}
+      responses:
+        "200":
+          description: Раунд начат — сообщается количество дефектов, но НЕ какие
+            именно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sandboxId: {type: string, format: uuid}
+                  hidden: {type: boolean}
+                  hiddenCount: {type: integer}
+                  message: {type: string}
+        "401": {$ref: "#/components/responses/ReadOnlySandbox"}
+        "422":
+          description: "`INVALID_COUNT`"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v1/sandbox/bugs/reveal:
+    post:
+      tags: [Дефекты]
+      summary: Показать ответ скрытого раунда
+      description: |
+        Для самопроверки: запиши найденные дефекты, затем вызови этот endpoint и сравни.
+        Каждый пропущенный дефект означает, что проверка, которая должна была его поймать,
+        ещё не реализована.
+
+        Дефекты ОСТАЮТСЯ включёнными — теперь просто становится известно, какие именно.
+        Выключить их можно через `PATCH /sandbox/bugs` или `POST /sandbox/reset`.
+      responses:
+        "200":
+          description: Список включённых дефектов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sandboxId: {type: string, format: uuid}
+                  hidden: {type: boolean}
+                  active:
+                    type: array
+                    items: {type: string}
+                  flags: {type: object, additionalProperties: {type: boolean}}
+        "401": {$ref: "#/components/responses/ReadOnlySandbox"}
+        "422":
+          description: "`NO_HIDDEN_ROUND` — активного скрытого раунда нет"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+# ============================================================================
+components:
+
+  securitySchemes:
+    SandboxKey:
+      type: apiKey
+      in: header
+      name: X-Sandbox-Key
+      description: |
+        Определяет, к какой области данных подключаться. Получается через
+        `POST /api/v1/sandbox`. Если не передать, используется demo-область только для чтения.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Получается через `POST /api/v1/auth/login`. Имеет настоящий формат JWT —
+        его можно вставить в jwt.io и посмотреть поля `sub`, `sandbox`, `jti`, `exp`.
+
+  responses:
+    Unauthorized:
+      description: Token отсутствует, недействителен, истёк или сессия отменена
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    ReadOnlySandbox:
+      description: Demo-данные доступны только для чтения — сначала выполни 
+        `POST /api/v1/sandbox`
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    SandboxExpired:
+      description: |
+        Срок действия sandbox истёк. `410 Gone` информативнее, чем `404`:
+        ресурс СУЩЕСТВОВАЛ, но срок его жизни закончился.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+
+  schemas:
+
+    Error:
+      type: object
+      description: |
+        Тело ошибки имеет ОДИНАКОВУЮ структуру для всех endpoint. Если бы каждый endpoint
+        возвращал собственный формат ошибки, тестовый код пришлось бы писать отдельно для каждого,
+        и он стал бы хрупким.
+      properties:
+        error:
+          type: object
+          properties:
+            code: {type: string, example: OUT_OF_STOCK}
+            message: {type: string, example: На складе осталось только 2 шт.}
+            details:
+              type: object
+              nullable: true
+              example: {requested: 5, available: 2}
+        correlationId:
+          type: string
+          example: req-8f3c1e2a-...
+          description: Также возвращается в заголовке ответа `X-Correlation-Id`.
+
+    Health:
+      type: object
+      properties:
+        status: {type: string, enum: [ok, degraded]}
+        database: {type: string, enum: [up, down]}
+        uptimeSeconds: {type: integer}
+        time: {type: string, format: date-time}
+
+    SandboxCreated:
+      type: object
+      properties:
+        sandboxId: {type: string, format: uuid}
+        apiKey: {type: string, example: qas_3f9a2b...}
+        label: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        howToUse: {type: string}
+        demoUser:
+          type: object
+          properties:
+            email: {type: string, example: demo@qashop.test}
+            password: {type: string, example: Password123!}
+
+    SandboxState:
+      type: object
+      properties:
+        sandboxId: {type: string, format: uuid}
+        mode: {type: string, enum: [demo-readonly, private]}
+        lastResetAt: {type: string, format: date-time, nullable: true}
+        counts:
+          type: object
+          properties:
+            products: {type: integer, example: 120}
+            variants: {type: integer, example: 360}
+            users: {type: integer, example: 41}
+            carts: {type: integer}
+            cart_items: {type: integer}
+            orders: {type: integer, example: 150}
+            order_items: {type: integer}
+            reviews: {type: integer, example: 200}
+            audit_log: {type: integer}
+
+    AuditLog:
+      type: object
+      properties:
+        id: {type: integer}
+        at: {type: string, format: date-time}
+        level: {type: string, enum: [INFO, WARN, ERROR]}
+        actor: {type: string, nullable: true}
+        action: {type: string, example: order.create}
+        entity: {type: string, nullable: true}
+        entity_id: {type: string, nullable: true}
+        correlation_id: {type: string, nullable: true}
+        detail: {type: object, nullable: true}
+
+    User:
+      type: object
+      properties:
+        id: {type: integer}
+        email: {type: string}
+        name: {type: string}
+        is_active: {type: boolean}
+        created_at: {type: string, format: date-time}
+
+    TokenResponse:
+      type: object
+      properties:
+        token: {type: string}
+        tokenType: {type: string, example: Bearer}
+        expiresIn: {type: integer, example: 3600}
+        expiresAt: {type: string, format: date-time}
+
+    LoginResponse:
+      allOf:
+      - $ref: "#/components/schemas/TokenResponse"
+      - type: object
+        properties:
+          user: {$ref: "#/components/schemas/User"}
+
+    Page:
+      type: object
+      properties:
+        page: {type: integer, example: 1}
+        size: {type: integer, example: 20}
+        total: {type: integer, example: 111}
+        totalPages: {type: integer, example: 6}
+        hasNext: {type: boolean}
+
+    Product:
+      type: object
+      properties:
+        id: {type: integer}
+        sku: {type: string, example: SKU-0001}
+        name: {type: string, example: Slim Fit White T-Shirt}
+        description: {type: string, nullable: true}
+        price: {type: number, example: 137.99}
+        currency: {type: string, example: TRY}
+        is_active: {type: boolean}
+        created_at: {type: string, format: date-time}
+        category: {type: string, nullable: true, example: tshirts}
+        category_name: {type: string, nullable: true}
+        brand:
+          type: string
+          nullable: true
+          description: Значение намеренно может быть null — для практики LEFT 
+            JOIN.
+        variant_count: {type: integer, example: 3}
+        total_stock: {type: integer}
+
+    ProductDetail:
+      allOf:
+      - $ref: "#/components/schemas/Product"
+      - type: object
+        properties:
+          rating_avg:
+            type: number
+            nullable: true
+            description: Рассчитывается ТОЛЬКО по одобренным отзывам.
+          rating_count: {type: integer}
+
+    Variant:
+      type: object
+      properties:
+        id: {type: integer}
+        sku: {type: string, example: SKU-0001-M}
+        size: {type: string, enum: [S, M, L]}
+        color: {type: string}
+        price: {type: number}
+        stock_qty: {type: integer}
+        reserved_qty: {type: integer}
+        available:
+          type: integer
+          description: '`stock_qty - reserved_qty`. Реальное количество, доступное
+            для заказа.'
+
+    Category:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        slug: {type: string}
+        parent_id: {type: integer, nullable: true}
+        product_count: {type: integer}
+        children:
+          type: array
+          items: {$ref: "#/components/schemas/Category"}
+
+    Cart:
+      type: object
+      properties:
+        id: {type: integer}
+        user_id: {type: integer, nullable: true}
+        guest_token: {type: string, nullable: true}
+        status: {type: string, enum: [open, converted, abandoned]}
+        created_at: {type: string, format: date-time}
+
+    CartItem:
+      type: object
+      properties:
+        id: {type: integer}
+        variant_id: {type: integer}
+        variant_sku: {type: string}
+        product_id: {type: integer}
+        product_name: {type: string}
+        size: {type: string}
+        color: {type: string}
+        qty: {type: integer}
+        unit_price:
+          type: number
+          description: Цена НА МОМЕНТ добавления в корзину (snapshot).
+        current_price:
+          type: number
+          description: ТЕКУЩАЯ цена товара. Если отличается от `unit_price`, 
+            формируется предупреждение.
+        line_total: {type: number}
+        stock_qty: {type: integer}
+        available: {type: integer}
+
+    Totals:
+      type: object
+      description: |
+        grand_total = subtotal - discount_total + shipping_total
+        Доставка бесплатна от 500 TL, ниже — 29.90.
+      properties:
+        subtotal: {type: number}
+        discount_total: {type: number}
+        shipping_total: {type: number}
+        grand_total: {type: number}
+
+    CartDetail:
+      type: object
+      properties:
+        cart: {$ref: "#/components/schemas/Cart"}
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/CartItem"}
+        itemCount: {type: integer}
+        totals: {$ref: "#/components/schemas/Totals"}
+        warnings:
+          type: object
+          properties:
+            priceChanged:
+              type: array
+              items:
+                type: object
+                properties:
+                  itemId: {type: integer}
+                  variantSku: {type: string}
+                  cartPrice: {type: number}
+                  currentPrice: {type: number}
+
+    Order:
+      type: object
+      properties:
+        id: {type: integer}
+        order_no: {type: string, example: ORD-1151}
+        status:
+          type: string
+          enum: [placed, paid, shipped, delivered, cancelled, returned]
+        subtotal: {type: number}
+        discount_total: {type: number}
+        shipping_total: {type: number}
+        grand_total: {type: number}
+        coupon_code: {type: string, nullable: true}
+        placed_at: {type: string, format: date-time}
+
+    Invoice:
+      type: object
+      properties:
+        invoiceNo: {type: string, example: INV-1151}
+        issuedAt: {type: string, format: date-time}
+        billTo:
+          type: object
+          properties:
+            name: {type: string}
+            email: {type: string}
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              description: {type: string}
+              qty: {type: integer}
+              unit_price: {type: number}
+              line_total: {type: number}
+        totals: {$ref: "#/components/schemas/Totals"}
+        reconciled:
+          type: boolean
+          description: |
+            Внутренняя проверка согласованности счёта: совпадает ли сумма строк
+            с промежуточным итогом. Если `false`, в данных есть ошибка согласованности,
+            которую может быть невозможно увидеть в UI.
+
+    Address:
+      type: object
+      properties:
+        id: {type: integer, example: 12}
+        label: {type: string, example: дом}
+        line1: {type: string, example: "Ataturk Cad. No 12 D3"}
+        city: {type: string, example: Стамбул}
+        country: {type: string, example: TR}
+        postal_code: {type: string, nullable: true, example: "34100"}
+        is_default:
+          type: boolean
+          description: У пользователя может быть только ОДИН адрес по умолчанию.
+
+    Review:
+      type: object
+      properties:
+        id: {type: integer, example: 305}
+        rating: {type: integer, minimum: 1, maximum: 5, example: 4}
+        comment: {type: string, nullable: true}
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+          description: |
+            Отзыв со статусом `pending` НЕ ВИДЕН на странице товара и НЕ УЧАСТВУЕТ
+            в средней оценке — это два отдельных бизнес-правила и две отдельные проверки.
+        author: {type: string, nullable: true, example: Demo Пользователь}
+        created_at: {type: string, format: date-time}
+
+    RatingSummary:
+      type: object
+      properties:
+        productId: {type: integer}
+        average: {type: number, example: 4.25}
+        count: {type: integer, example: 8}
+        basis:
+          type: string
+          example: approved
+          description: По какому набору отзывов рассчитано среднее значение.
+        distribution:
+          type: object
+          description: Распределение оценок — количество отзывов от 5 до 1 
+            звезды.
+          additionalProperties: {type: integer}
+
+    Payment:
+      type: object
+      properties:
+        id: {type: integer}
+        method: {type: string, enum: [card, transfer, cod]}
+        status:
+          type: string
+          enum: [pending, success, failed, refunded]
+          description: |
+            Неуспешная оплата СОЗДАЁТ запись, но не меняет статус заказа.
+            «Попытались и не получилось» и «не пытались вообще» — разные состояния.
+        amount: {type: number, example: 209.90}
+        txn_ref: {type: string, nullable: true, example: TXN-1737000000000-42}
+        created_at: {type: string, format: date-time}
+
+    Shipment:
+      type: object
+      properties:
+        id: {type: integer}
+        carrier: {type: string, nullable: true, example: Yurtici}
+        tracking_no: {type: string, nullable: true, example: TRK0000123456}
+        status: {type: string, enum: [preparing, in_transit, delivered, returned]}
+        shipped_at: {type: string, format: date-time, nullable: true}
+        delivered_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Окно возврата (14 дней) отсчитывается ИМЕННО с этого 
+            момента.
+
+    BugFlag:
+      type: object
+      description: |
+        Управляемый дефект. `breaks` описывает, что он ломает,
+        а `catchableBy` — какая проверка должна его обнаружить.
+      properties:
+        key: {type: string, example: oversell}
+        enabled: {type: boolean}
+        title:
+          type: object
+          properties:
+            tr: {type: string}
+            en: {type: string}
+        breaks:
+          type: object
+          properties:
+            tr: {type: string}
+            en: {type: string}
+        catchableBy:
+          type: object
+          properties:
+            tr: {type: string}
+            en: {type: string}
+        reconciled:
+          type: boolean
+          description: |
+            Совпадает ли сумма строк с промежуточным итогом. Если `false`,
+            значит в данных есть ошибка согласованности.

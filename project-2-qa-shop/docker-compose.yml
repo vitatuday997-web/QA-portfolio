@@ -1,0 +1,28 @@
+services:
+  db:
+    image: ghcr.io/hasankocaman/qa-shop-db:${QA_SHOP_TAG:-latest}
+    container_name: qashop-db
+    ports:
+      - "5433:5432"
+    volumes:
+      - qashop-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/hasankocaman/qa-shop-api:${QA_SHOP_TAG:-latest}
+    container_name: qashop-api
+    environment:
+      DATABASE_URL: postgres://qashop:qashop@db:5432/qashop
+      PORT: 4000
+      JWT_SECRET: qa-shop-local-dev-secret
+      TOKEN_TTL_SECONDS: 3600
+      SANDBOX_TTL_DAYS: 7
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  qashop-pgdata:
